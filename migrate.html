@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <title>SFC Chemical 3.0 — Firebase Data Migration</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- Firebase Compat SDK (Works on file:// and online) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+  <!-- Preloaded Data from Google Sheets -->
+  <script src="js/initial-data.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: { fontFamily: { sans: ['Prompt', 'sans-serif'] } } }
+    }
+  </script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
+  <div class="max-w-2xl w-full bg-slate-900/95 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl backdrop-blur-xl">
+    
+    <!-- Header -->
+    <div class="flex items-center gap-4 border-b border-slate-800 pb-5 mb-5">
+      <div class="w-14 h-14 rounded-2xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 text-2xl shrink-0">
+        <i class="fas fa-cloud-upload-alt"></i>
+      </div>
+      <div>
+        <h1 class="text-xl font-bold text-white">SFC Chemical 3.0 — Data Migration</h1>
+        <p class="text-xs text-slate-400 mt-0.5">ย้ายฐานข้อมูลจาก Google Sheets / chemDB เข้าสู่ Firebase Firestore</p>
+      </div>
+    </div>
+
+    <!-- Firebase Project Indicator & Direct Console Links -->
+    <div class="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-4 mb-5 text-xs flex justify-between items-center flex-wrap gap-2">
+      <div>
+        <span class="text-slate-400">Firebase Project:</span>
+        <span class="font-mono font-bold text-amber-400 ml-1">all-data-base-f7232</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <a href="https://console.firebase.google.com/project/all-data-base-f7232/firestore" target="_blank" class="px-2.5 py-1 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/30 rounded-lg text-[11px] font-medium transition flex items-center gap-1">
+          <i class="fas fa-external-link-alt"></i> เปิด Firestore Console
+        </a>
+      </div>
+    </div>
+
+    <!-- Warning / Setup Box -->
+    <div id="setupAlert" class="mb-5 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs leading-relaxed hidden">
+      <div class="font-bold mb-1 flex items-center gap-2 text-sm text-amber-400">
+        <i class="fas fa-exclamation-triangle"></i> ตรวจสอบการตั้งค่า Firebase Console:
+      </div>
+      <p>หากกดเริ่มย้ายข้อมูลแล้วมีข้อผิดพลาด <b>"database does not exist"</b> แสดงว่ายังไม่ได้สร้างฐานข้อมูลใน Firebase Console</p>
+      <div class="mt-2 pl-3 border-l-2 border-amber-500/40 space-y-1">
+        <div>1. เข้า <a href="https://console.firebase.google.com/project/all-data-base-f7232/firestore" target="_blank" class="underline font-bold text-amber-400">Firestore Console</a> -> กด <b>"Create database"</b> -> เลือก <b>Start in test mode</b></div>
+        <div>2. เข้า <a href="https://console.firebase.google.com/project/all-data-base-f7232/authentication" target="_blank" class="underline font-bold text-amber-400">Auth Console</a> -> กด <b>"Get started"</b> -> เปิดใช้งาน <b>Email/Password</b></div>
+      </div>
+    </div>
+
+    <!-- Data Source Options -->
+    <div class="space-y-4 mb-5">
+      <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider">แหล่งข้อมูลต้นทาง (Source Data)</label>
+      
+      <!-- Option 1: Live Cloud Fetch -->
+      <div class="p-4 rounded-2xl bg-slate-800/40 border border-slate-800 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-semibold text-white flex items-center gap-2">
+            <i class="fab fa-google text-blue-400"></i> ดึงจาก Google Apps Script ล่าสุด
+          </span>
+          <button id="fetchCloudBtn" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-blue-600/20">
+            <i class="fas fa-sync-alt"></i> ดึงข้อมูลสดจากคลาวด์
+          </button>
+        </div>
+        <input type="text" id="gasUrlInput" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 font-mono outline-none" value="https://script.google.com/macros/s/AKfycbzF4Hw7282mOt0bxseEuEClQbJGgnaJNzf9ZpfZNku5M-HV5WpdPmnL3ToT5h7VwfeErg/exec">
+      </div>
+
+      <!-- Option 2: Upload local JSON -->
+      <div class="p-3.5 rounded-2xl bg-slate-800/40 border border-slate-800 flex items-center justify-between">
+        <div>
+          <div class="text-sm font-semibold text-white flex items-center gap-2">
+            <i class="fas fa-file-code text-emerald-400"></i> หรือเลือกไฟล์ chemDB.json สำรอง
+          </div>
+          <div class="text-[11px] text-slate-400">ในกรณีที่เน็ตขององค์กรบล็อก Google Script</div>
+        </div>
+        <input type="file" id="jsonFileInput" accept=".json" class="hidden">
+        <button onclick="document.getElementById('jsonFileInput').click()" class="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-xl text-xs font-bold transition">
+          <i class="fas fa-folder-open mr-1"></i> เลือกไฟล์
+        </button>
+      </div>
+    </div>
+
+    <!-- Data Summary Preview -->
+    <div id="dataPreview" class="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 mb-5">
+      <div class="flex justify-between items-center mb-3">
+        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+          <i class="fas fa-check-circle text-green-400"></i> ข้อมูลที่พร้อมย้ายเข้า Firestore
+        </h3>
+        <span id="dataSourceBadge" class="text-[10px] px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-400 border border-blue-500/30">Preloaded Data</span>
+      </div>
+      <div class="grid grid-cols-4 gap-2.5 text-center">
+        <div class="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
+          <div class="text-lg font-bold text-blue-400 font-mono" id="chemCount">0</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">Chemicals</div>
+        </div>
+        <div class="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
+          <div class="text-lg font-bold text-purple-400 font-mono" id="userCount">0</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">Users</div>
+        </div>
+        <div class="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
+          <div class="text-lg font-bold text-emerald-400 font-mono" id="histCount">0</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">History</div>
+        </div>
+        <div class="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
+          <div class="text-lg font-bold text-amber-400 font-mono" id="confCount">0</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">Configs</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Progress & Status Log -->
+    <div id="progressSection" class="hidden space-y-2 mb-5">
+      <div class="flex justify-between text-xs text-slate-400 font-medium">
+        <span id="progressText">กำลังประมวลผล...</span>
+        <span id="progressPercent" class="font-mono font-bold text-blue-400">0%</span>
+      </div>
+      <div class="w-full h-3 bg-slate-950 rounded-full overflow-hidden border border-slate-800 p-0.5">
+        <div id="progressBar" class="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-500 rounded-full w-0 transition-all duration-300"></div>
+      </div>
+      <div id="logBox" class="p-3 bg-slate-950 rounded-xl font-mono text-[11px] text-slate-400 max-h-32 overflow-y-auto space-y-1 border border-slate-800/80"></div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="flex gap-3">
+      <a href="index.html" class="flex-1 py-3 px-4 rounded-xl border border-slate-800 text-slate-300 font-bold text-center text-sm hover:bg-slate-800 transition">
+        กลับสู่หน้าหลัก (Index)
+      </a>
+      <button id="startMigrateBtn" class="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold text-sm hover:from-blue-500 hover:to-indigo-500 transition shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2">
+        <i class="fas fa-play"></i> เริ่มการย้ายข้อมูล (Start Migration)
+      </button>
+    </div>
+  </div>
+
+  <!-- Standard (Non-Module) Script: Works 100% on file:// and online -->
+  <script>
+    // 1. Initialize Firebase with Compat SDK
+    const firebaseConfig = {
+      apiKey: "AIzaSyClOgqDisJ1d5R0fShqfaSPvaxzE4qLG-A",
+      authDomain: "all-data-base-f7232.firebaseapp.com",
+      projectId: "all-data-base-f7232",
+      storageBucket: "all-data-base-f7232.firebasestorage.app",
+      messagingSenderId: "1049280068517",
+      appId: "1:1049280068517:web:10ae75a5480a5f6a6b464c"
+    };
+
+    let app, auth, db;
+    try {
+      app = firebase.initializeApp(firebaseConfig);
+      auth = firebase.auth();
+      db = firebase.firestore();
+    } catch (e) {
+      console.error("Firebase init error:", e);
+    }
+
+    let loadedData = null;
+
+    // Helper: Logging
+    function log(msg, color = "text-slate-400") {
+      const box = document.getElementById("logBox");
+      const p = document.createElement("div");
+      p.className = color;
+      p.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      box.appendChild(p);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function updateProgress(percent, text) {
+      document.getElementById("progressSection").classList.remove("hidden");
+      document.getElementById("progressBar").style.width = `${percent}%`;
+      document.getElementById("progressPercent").innerText = `${Math.round(percent)}%`;
+      if (text) document.getElementById("progressText").innerText = text;
+    }
+
+    function displayPreview(data, sourceLabel) {
+      document.getElementById("chemCount").innerText = (data.chemicals || []).length;
+      document.getElementById("userCount").innerText = (data.users || []).length;
+      document.getElementById("histCount").innerText = (data.history || []).length;
+      document.getElementById("confCount").innerText = (data.configs || []).length;
+      if (sourceLabel) {
+        document.getElementById("dataSourceBadge").innerText = sourceLabel;
+      }
+      document.getElementById("dataPreview").classList.remove("hidden");
+    }
+
+    // Initialize with preloaded data immediately upon opening
+    window.addEventListener("DOMContentLoaded", () => {
+      if (window.PRELOADED_SFC_DATA) {
+        loadedData = window.PRELOADED_SFC_DATA;
+        displayPreview(loadedData, "ข้อมูลที่เตรียมไว้แล้ว (พร้อมย้ายทันที)");
+      }
+    });
+
+    // Option 1: Live Cloud Fetch
+    document.getElementById("fetchCloudBtn").onclick = async function() {
+      const btn = document.getElementById("fetchCloudBtn");
+      const url = document.getElementById("gasUrlInput").value.trim();
+      if (!url) return alert("กรุณาระบุ URL");
+
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> กำลังดึงข้อมูล...';
+
+      try {
+        const fetchUrl = url + (url.includes("?") ? "&" : "?") + "action=getData&ts=" + Date.now();
+        const res = await fetch(fetchUrl);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        loadedData = data;
+        displayPreview(data, "ดึงสดจาก Google Sheets สำเร็จ");
+        alert("ดึงข้อมูลจาก Google Sheets ล่าสุดสำเร็จ!");
+      } catch (err) {
+        console.warn("Live fetch failed, falling back to preloaded data:", err);
+        alert("ไม่สามารถเชื่อมต่อ Google Script ได้ (" + err.message + ")\nระบบจะใช้ข้อมูลสำรองที่มีอยู่ 49 สารเคมี และ 426 ประวัติแทน");
+        if (window.PRELOADED_SFC_DATA) {
+          loadedData = window.PRELOADED_SFC_DATA;
+          displayPreview(loadedData, "ใช้ข้อมูลสำรองในโปรแกรม");
+        }
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-sync-alt"></i> ดึงข้อมูลสดจากคลาวด์';
+      }
+    };
+
+    // Option 2: Upload local JSON
+    document.getElementById("jsonFileInput").onchange = async function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const json = JSON.parse(text);
+        if (json.chemicals && json.history) {
+          loadedData = json;
+          displayPreview(loadedData, "จากไฟล์ JSON: " + file.name);
+          alert("อ่านข้อมูลจากไฟล์เรียบร้อย!");
+        } else {
+          alert("ไฟล์ JSON ต้องประกอบด้วยตาราง chemicals และ history");
+        }
+      } catch (err) {
+        alert("ไม่สามารถอ่านไฟล์ได้: " + err.message);
+      }
+    };
+
+    // Option 3: Start Migration
+    document.getElementById("startMigrateBtn").onclick = async function() {
+      if (!loadedData) {
+        if (window.PRELOADED_SFC_DATA) {
+          loadedData = window.PRELOADED_SFC_DATA;
+        } else {
+          return alert("ไม่พบข้อมูลสำหรับย้าย");
+        }
+      }
+
+      const startBtn = document.getElementById("startMigrateBtn");
+      startBtn.disabled = true;
+      document.getElementById("setupAlert").classList.add("hidden");
+
+      log("เริ่มกระบวนการย้ายข้อมูลเข้าสู่ Cloud Firestore...", "text-blue-400 font-bold");
+      updateProgress(5, "กำลังตรวจสอบการเชื่อมต่อ Firestore...");
+
+      try {
+        const chemicals = loadedData.chemicals || [];
+        const users = loadedData.users || [];
+        const history = loadedData.history || [];
+        const configs = loadedData.configs || [];
+
+        const totalItems = chemicals.length + users.length + history.length + configs.length;
+        let processed = 0;
+
+        // Test write to verify Firestore database exists
+        try {
+          await db.collection("_healthcheck").doc("ping").set({
+            test: true,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+          });
+          await db.collection("_healthcheck").doc("ping").delete();
+          log("เชื่อมต่อ Firestore สำเร็จ!", "text-green-400");
+        } catch (dbErr) {
+          console.error("Firestore health check failed:", dbErr);
+          document.getElementById("setupAlert").classList.remove("hidden");
+          throw new Error("ยังไม่ได้กด 'Create database' ใน Firebase Console (" + dbErr.message + ")");
+        }
+
+        // Batch helper: chunk of 350 items
+        async function commitInBatches(items, writerFn, name) {
+          const CHUNK_SIZE = 350;
+          for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+            const chunk = items.slice(i, i + CHUNK_SIZE);
+            const batch = db.batch();
+            chunk.forEach(item => writerFn(batch, item));
+            await batch.commit();
+            processed += chunk.length;
+            const pct = (processed / totalItems) * 90;
+            updateProgress(pct, `กำลังบันทึก ${name} (${processed}/${totalItems})...`);
+            log(`บันทึก ${name} แล้ว ${processed} รายการ`, "text-slate-400");
+          }
+        }
+
+        // A. Chemicals
+        log("กำลังบันทึก Chemicals (49 รายการ)...", "text-amber-400");
+        await commitInBatches(chemicals, (batch, c) => {
+          const docRef = db.collection("chemicals").doc(String(c.id));
+          batch.set(docRef, {
+            id: String(c.id),
+            name: c.name,
+            qty: Number(c.qty) || 0,
+            unit: c.unit || "ml",
+            ml_per_bottle: Number(c.ml_per_bottle !== undefined ? c.ml_per_bottle : c.ml_per_bottom) || 0,
+            ml_per_pail: Number(c.ml_per_pail) || 0,
+            min_stock: 50,
+            status: "active",
+            created_at: firebase.firestore.FieldValue.serverTimestamp(),
+            updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+            // Tier 2: ISO Fields
+            cas_number: null,
+            grade: null,
+            supplier: null,
+            storage_location: null,
+            ghs_pictograms: []
+          });
+        }, "Chemicals");
+
+        // B. Users
+        log("กำลังบันทึก Users (16 รายชื่อ)...", "text-purple-400");
+        await commitInBatches(users, (batch, u) => {
+          const username = (u.username || "").trim().toLowerCase();
+          const docRef = db.collection("users").doc(username);
+          batch.set(docRef, {
+            username: username,
+            password: String(u.password !== undefined ? u.password : "1234"),
+            role: (u.role || "user").toLowerCase(),
+            display_name: u.username,
+            email: `${username}@sfc.local`,
+            is_active: true,
+            created_at: firebase.firestore.FieldValue.serverTimestamp()
+          });
+        }, "Users");
+
+        // C. Transactions
+        log("กำลังบันทึก Transactions (426 ประวัติ)...", "text-emerald-400");
+        await commitInBatches(history, (batch, h) => {
+          const docRef = db.collection("transactions").doc();
+          let formattedDate = h.date || "";
+          if (formattedDate.includes("T") || formattedDate.endsWith("Z")) {
+            const d = new Date(formattedDate);
+            if (!isNaN(d.getTime())) {
+              const pad = (n) => String(n).padStart(2, "0");
+              formattedDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+            }
+          }
+          batch.set(docRef, {
+            id: String(h.id || Date.now()),
+            type: h.action || "LOG",
+            action: h.action || "LOG",
+            user_name: h.user || "system",
+            detail: h.detail || "",
+            date: formattedDate,
+            chem_name: h.chem_name || null,
+            chem_qty: Number(h.chem_qty) || null,
+            chem_unit: h.chem_unit || null,
+            chem_base_qty: Number(h.chem_base_qty) || null,
+            category: h.category || "",
+            remark: h.remark || "",
+            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+            // Tier 2: ISO Traceability Fields
+            lot_number: null,
+            balance_before: null,
+            balance_after: null,
+            approved_by: null
+          });
+        }, "Transactions");
+
+        // D. Configs
+        log("กำลังบันทึก Configs...", "text-blue-400");
+        if (configs.length > 0) {
+          await commitInBatches(configs, (batch, cf) => {
+            const docRef = db.collection("configs").doc(String(cf.id || Date.now()));
+            batch.set(docRef, {
+              id: String(cf.id),
+              type: cf.type || "usage_type",
+              value: cf.value || "",
+              created_at: firebase.firestore.FieldValue.serverTimestamp()
+            });
+          }, "Configs");
+        }
+
+        // Initialize ISO Collections (empty placeholder to create collection namespaces)
+        log("เตรียมโครงสร้าง Collections สำหรับ ISO Audit (Tier 2)...", "text-cyan-400");
+        const isoBatch = db.batch();
+        isoBatch.set(db.collection("chemical_lots").doc("_meta"), { created_at: firebase.firestore.FieldValue.serverTimestamp(), description: "ISO 17025 Lot Registry" });
+        isoBatch.set(db.collection("audit_log").doc("_meta"), { created_at: firebase.firestore.FieldValue.serverTimestamp(), description: "ISO 9001 Audit Trail" });
+        isoBatch.set(db.collection("incidents").doc("_meta"), { created_at: firebase.firestore.FieldValue.serverTimestamp(), description: "ISO 45001 Safety Incidents" });
+        await isoBatch.commit();
+
+        updateProgress(100, "ย้ายข้อมูลสำเร็จเรียบร้อยแล้ว!");
+        log("🎉 ย้ายข้อมูลเข้าสู่ Firestore เรียบร้อยสมบูรณ์ทุกรายการ!", "text-green-400 font-bold text-sm");
+        alert("ย้ายข้อมูลเข้าสู่ Cloud Firestore สำเร็จแล้ว!\nสามารถกด 'กลับสู่หน้าหลัก' เพื่อเริ่มใช้งานได้ทันที");
+      } catch (err) {
+        console.error("Migration error:", err);
+        log("❌ เกิดข้อผิดพลาด: " + err.message, "text-red-400 font-bold");
+        alert("เกิดข้อผิดพลาดในการย้ายข้อมูล:\n" + err.message);
+      } finally {
+        startBtn.disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>
